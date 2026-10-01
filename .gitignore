@@ -1,0 +1,12 @@
+# Compiled binaries
+devdoctor
+devdoctor.exe
+*.exe
+*.test
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+
+# Tooling workspace state
+.freebuff/
