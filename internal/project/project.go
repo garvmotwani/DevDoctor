@@ -30,9 +30,14 @@ type Fact struct {
 }
 
 // Report is the result of scanning one project directory.
+//
+// Facts are for humans; Present is for rules. Rules ask about raw paths
+// ("does package.json exist?") instead of matching on display labels, so
+// rewording a Fact can never silently break a rule.
 type Report struct {
-	Root  string // the directory that was scanned
-	Facts []Fact // every claim made about the project
+	Root    string          // the directory that was scanned
+	Facts   []Fact          // every claim made about the project
+	Present map[string]bool // marker paths (slash-separated, relative to Root) that exist
 }
 
 // IsNodeProject reports whether the scan found Node.js indicators.
@@ -66,6 +71,7 @@ type marker struct {
 var markers = []marker{
 	// Node.js
 	{relPath: "package.json", label: "Node.js project"},
+	{relPath: "node_modules", label: "node_modules"},
 	{relPath: "package-lock.json", label: "package-lock.json"},
 	{relPath: "npm-shrinkwrap.json", label: "npm-shrinkwrap.json"},
 	{relPath: "pnpm-lock.yaml", label: "pnpm-lock.yaml"},
@@ -108,7 +114,8 @@ func ScanPath(dir string) (Report, error) {
 // inside fsys under which the project lives ("" when fsys is rooted at
 // the project directory itself, as os.DirFS and our tests arrange).
 func scanFS(fsys fs.FS, root string) (Report, error) {
-	found := map[string]bool{}
+	found := map[string]bool{}   // label -> seen (drives Facts)
+	present := map[string]bool{} // raw path -> exists (drives rules)
 
 	// The root itself must exist and be a directory. A missing root is
 	// a real error (imagine running devdoctor from a directory that was
@@ -128,20 +135,22 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 	// directory in normal repos, a plain file in worktrees). A file
 	// that merely *contains* "git" in its name, like .gitignore, is
 	// weak evidence and must not count as a repository.
-	present, err := statAny(fsys, path.Join(root, ".git"))
+	exists, err := statAny(fsys, path.Join(root, ".git"))
 	if err != nil {
 		return Report{Root: root}, err
 	}
-	if present {
+	if exists {
+		present[".git"] = true
 		found["Git repository"] = true
 	}
 
 	for _, m := range markers {
-		present, err := statAny(fsys, path.Join(root, m.relPath))
+		exists, err := statAny(fsys, path.Join(root, m.relPath))
 		if err != nil {
 			return Report{Root: root}, err
 		}
-		if present {
+		if exists {
+			present[m.relPath] = true
 			found[m.label] = true
 		}
 	}
@@ -149,8 +158,9 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 	// Nothing matched is itself a useful finding, not an error.
 	if len(found) == 0 {
 		return Report{
-			Root:  root,
-			Facts: []Fact{{Label: "plain directory", Detail: "no recognizable project files"}},
+			Root:    root,
+			Present: present,
+			Facts:   []Fact{{Label: "plain directory", Detail: "no recognizable project files"}},
 		}, nil
 	}
 
@@ -180,7 +190,7 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 		}
 	}
 
-	return Report{Root: root, Facts: facts}, nil
+	return Report{Root: root, Present: present, Facts: facts}, nil
 }
 
 // statAny answers "does this path exist?" while preserving the

@@ -16,7 +16,7 @@ uploaded. Secrets are never printed.
 | 1     | System info (OS, architecture)   | done     |
 | 2     | Developer tool detection         | done     |
 | 3     | Project detection                | done (tests included) |
-| 4     | Diagnostic rule engine           | not yet  |
+| 4     | Diagnostic rule engine           | done (tests included) |
 
 ## Run
 
