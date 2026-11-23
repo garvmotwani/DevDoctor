@@ -65,6 +65,18 @@ func (r Report) IsPythonProject() bool {
 	return false
 }
 
+// PackageManager returns the package manager indicated by exactly one
+// Node.js lockfile. The boolean is false when no lockfile is present or when
+// the project has conflicting lockfiles; in both cases a diagnostic must not
+// guess which install command is safe to recommend.
+func (r Report) PackageManager() (string, bool) {
+	managers := packageManagers(r.Present)
+	if len(managers) != 1 {
+		return "", false
+	}
+	return managers[0], true
+}
+
 // marker is a path whose existence lets us claim label.
 type marker struct {
 	relPath string // relative to the project root, slash-separated
@@ -242,19 +254,7 @@ func statAny(fsys fs.FS, name string) (bool, error) {
 // lockfileSummary maps lockfile evidence to package manager names.
 // More than one lockfile is worth surfacing, not hiding.
 func lockfileSummary(found map[string]bool) string {
-	var managers []string
-	if found["package-lock.json"] || found["npm-shrinkwrap.json"] {
-		managers = append(managers, "npm")
-	}
-	if found["pnpm-lock.yaml"] {
-		managers = append(managers, "pnpm")
-	}
-	if found["yarn.lock"] {
-		managers = append(managers, "yarn")
-	}
-	if found["bun.lockb"] {
-		managers = append(managers, "bun")
-	}
+	managers := packageManagers(found)
 	switch len(managers) {
 	case 0:
 		return ""
@@ -263,4 +263,24 @@ func lockfileSummary(found map[string]bool) string {
 	default:
 		return strings.Join(managers, " + ") + " (multiple lockfiles)"
 	}
+}
+
+// packageManagers maps lockfile evidence to package-manager names in a stable
+// order. It is shared by display facts and diagnostics so the tool never says
+// one thing about a project while recommending another.
+func packageManagers(present map[string]bool) []string {
+	var managers []string
+	if present["package-lock.json"] || present["npm-shrinkwrap.json"] {
+		managers = append(managers, "npm")
+	}
+	if present["pnpm-lock.yaml"] {
+		managers = append(managers, "pnpm")
+	}
+	if present["yarn.lock"] {
+		managers = append(managers, "yarn")
+	}
+	if present["bun.lockb"] {
+		managers = append(managers, "bun")
+	}
+	return managers
 }

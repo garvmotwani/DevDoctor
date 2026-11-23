@@ -50,3 +50,5 @@ cannot be printed by accident.
 - Deterministic diagnostics before any AI features.
 - Never print secret values (e.g. from `.env`).
 - Every suggested fix is displayed before it could ever be executed.
+- Package-manager fixes are suggested only when one lockfile identifies a
+  single manager; DevDoctor never guesses between npm, pnpm, Yarn, or Bun.

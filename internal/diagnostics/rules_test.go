@@ -66,17 +66,23 @@ func TestMissingNodeModules(t *testing.T) {
 		name string
 		rep  project.Report
 		want bool // expect the diagnostic
+		fix  string
 	}{
-		{"package.json without node_modules", report("package.json"), true},
-		{"package.json with node_modules", report("package.json", "node_modules"), false},
-		{"no package.json at all", report(), false},
-		{"lockfile alone is weak evidence", report("package-lock.json"), false},
+		{"npm lockfile", report("package.json", "package-lock.json"), true, "npm install"},
+		{"pnpm lockfile", report("package.json", "pnpm-lock.yaml"), true, "pnpm install"},
+		{"yarn lockfile", report("package.json", "yarn.lock"), true, "yarn install"},
+		{"bun lockfile", report("package.json", "bun.lockb"), true, "bun install"},
+		{"no lockfile does not guess", report("package.json"), true, ""},
+		{"multiple lockfiles do not guess", report("package.json", "package-lock.json", "yarn.lock"), true, ""},
+		{"package.json with node_modules", report("package.json", "node_modules"), false, ""},
+		{"no package.json at all", report(), false, ""},
+		{"lockfile alone is weak evidence", report("package-lock.json"), false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := missingNodeModules(tc.rep)
 			if tc.want {
-				wantOne(t, got, "DEP-001", SeverityWarning, "npm install")
+				wantOne(t, got, "DEP-001", SeverityWarning, tc.fix)
 			} else {
 				wantNone(t, got)
 			}

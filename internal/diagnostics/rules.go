@@ -27,13 +27,21 @@ func missingNodeModules(rep project.Report) []Diagnostic {
 	if !rep.Present["package.json"] || rep.Present["node_modules"] {
 		return nil
 	}
+	fix := ""
+	if manager, ok := rep.PackageManager(); ok {
+		fix = manager + " install"
+	}
+	description := "Your project declares Node.js dependencies in package.json, but node_modules was not found. The application will not start until dependencies are installed."
+	if fix == "" {
+		description += " DevDoctor could not identify one package manager safely, so it is not suggesting an install command."
+	}
 	return []Diagnostic{{
 		ID:           "DEP-001",
 		Severity:     SeverityWarning,
 		Title:        "Node dependencies may not be installed",
-		Description:  "Your project declares Node.js dependencies in package.json, but node_modules was not found. The application will not start until dependencies are installed.",
+		Description:  description,
 		Evidence:     "package.json exists; node_modules does not exist.",
-		SuggestedFix: "npm install",
+		SuggestedFix: fix,
 	}}
 }
 
