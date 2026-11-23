@@ -17,6 +17,7 @@ uploaded. Secrets are never printed.
 | 2     | Developer tool detection         | done     |
 | 3     | Project detection                | done (tests included) |
 | 4     | Diagnostic rule engine           | done (tests included) |
+| 5     | Environment variable diagnostics | done (tests included) |
 
 ## Run
 
@@ -36,8 +37,12 @@ go build -o devdoctor .
 go test ./...
 ```
 
-Project detection is tested against in-memory filesystems (`fstest.MapFS`),
-so tests never touch the real disk.
+Project and environment detection are tested against in-memory filesystems
+(`fstest.MapFS`), so tests never touch the real disk.
+
+Environment diagnostics (`ENV-001`..`ENV-004`) report variable *names*,
+emptiness and malformed line numbers. `.env` values are never stored, so they
+cannot be printed by accident.
 
 ## Principles
 

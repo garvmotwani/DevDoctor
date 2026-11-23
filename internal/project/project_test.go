@@ -1,6 +1,7 @@
 package project
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -145,7 +146,7 @@ func TestScanDockerAndEnvFiles(t *testing.T) {
 	files := map[string]string{
 		"fakeDir/Dockerfile":        "FROM node:22\n",
 		"fakeDir/compose.yml":       "services: {}\n",
-		"fakeDir/.env":              "SECRET_TOKEN=abc123\n", // contents are never read in this phase
+		"fakeDir/.env":              "SECRET_TOKEN=abc123\n", // parsed for names only
 		"fakeDir/.env.example":      "SECRET_TOKEN=\n",
 		"fakeDir/package.json":      "{}",
 		"fakeDir/package-lock.json": "{}",
@@ -155,6 +156,51 @@ func TestScanDockerAndEnvFiles(t *testing.T) {
 		[]string{"Docker configuration", ".env", ".env.example", "npm"},
 		nil,
 	)
+}
+
+// TestScanParsesEnvNamesOnly is the scanner half of the "never print a
+// secret" guarantee: names and emptiness are kept, values are not.
+func TestScanParsesEnvNamesOnly(t *testing.T) {
+	const secret = "supersecret123"
+	files := map[string]string{
+		"fakeDir/.env":         "DATABASE_PASSWORD=" + secret + "\nPORT=\n",
+		"fakeDir/.env.example": "DATABASE_PASSWORD=\nPORT=8000\n",
+	}
+	rep := scan(t, files)
+
+	if rep.Env == nil || rep.EnvExample == nil {
+		t.Fatalf("expected both env files to be parsed: %+v", rep)
+	}
+	if !rep.Env.Has("DATABASE_PASSWORD") {
+		t.Error("expected DATABASE_PASSWORD to be recorded by name")
+	}
+	if got := strings.Join(rep.Env.Empty, ","); got != "PORT" {
+		t.Errorf("Empty = %q, want \"PORT\"", got)
+	}
+	if got := strings.Join(rep.EnvExample.Keys, ","); got != "DATABASE_PASSWORD,PORT" {
+		t.Errorf("example Keys = %q", got)
+	}
+	// The report is what later stages (and the terminal) see; no value
+	// text may survive inside it.
+	dump := fmt.Sprintf("%+v", rep)
+	for _, value := range []string{secret, "8000"} {
+		if strings.Contains(dump, value) {
+			t.Fatalf("report still contains value %q: %s", value, dump)
+		}
+	}
+}
+
+func TestScanEnvExampleWithoutEnvFile(t *testing.T) {
+	files := map[string]string{
+		"fakeDir/.env.example": "API_KEY=\n",
+	}
+	rep := scan(t, files)
+	if rep.Env != nil {
+		t.Errorf(".env should be nil when absent, got %+v", rep.Env)
+	}
+	if rep.EnvExample == nil || !rep.EnvExample.Has("API_KEY") {
+		t.Errorf("expected .env.example to be parsed, got %+v", rep.EnvExample)
+	}
 }
 
 func TestScanGitRepository(t *testing.T) {

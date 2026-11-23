@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"devdoctor/internal/env"
 	"devdoctor/internal/project"
 )
 
@@ -15,6 +16,20 @@ func report(present ...string) project.Report {
 		m[p] = true
 	}
 	return project.Report{Present: m}
+}
+
+// envReport builds a report for the environment rules. A nil argument
+// means "that file does not exist", which is exactly how the scanner
+// signals absence.
+func envReport(envFile, example *env.File) project.Report {
+	present := map[string]bool{}
+	if envFile != nil {
+		present[".env"] = true
+	}
+	if example != nil {
+		present[".env.example"] = true
+	}
+	return project.Report{Present: present, Env: envFile, EnvExample: example}
 }
 
 // wantOne asserts exactly one diagnostic was produced and that it
@@ -121,8 +136,156 @@ func TestMissingGitRepository(t *testing.T) {
 	}
 }
 
+func TestMissingEnvFile(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  project.Report
+		want bool
+	}{
+		{"example without .env", envReport(nil, &env.File{Keys: []string{"API_KEY"}}), true},
+		{"both present", envReport(&env.File{Keys: []string{"API_KEY"}}, &env.File{Keys: []string{"API_KEY"}}), false},
+		{".env only", envReport(&env.File{Keys: []string{"API_KEY"}}, nil), false},
+		{"neither present", envReport(nil, nil), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := missingEnvFile(tc.rep)
+			if tc.want {
+				// No fix: copying a file is platform-specific and is
+				// never executed by DevDoctor.
+				wantOne(t, got, "ENV-001", SeverityWarning, "")
+			} else {
+				wantNone(t, got)
+			}
+		})
+	}
+}
+
+func TestMissingEnvKeys(t *testing.T) {
+	cases := []struct {
+		name    string
+		rep     project.Report
+		want    bool
+		wantTxt string // substring that must appear in Evidence
+	}{
+		{
+			name:    "one key missing",
+			rep:     envReport(&env.File{Keys: []string{"A"}}, &env.File{Keys: []string{"A", "B"}}),
+			want:    true,
+			wantTxt: "B",
+		},
+		{
+			name:    "two keys missing",
+			rep:     envReport(&env.File{Keys: []string{"A"}}, &env.File{Keys: []string{"A", "B", "C"}}),
+			want:    true,
+			wantTxt: "B, C",
+		},
+		{
+			name: "all keys present",
+			rep:  envReport(&env.File{Keys: []string{"A", "B"}}, &env.File{Keys: []string{"A", "B"}}),
+			want: false,
+		},
+		{
+			name: "no .env at all: ENV-001 covers that case",
+			rep:  envReport(nil, &env.File{Keys: []string{"A"}}),
+			want: false,
+		},
+		{
+			name: "no example file",
+			rep:  envReport(&env.File{Keys: []string{"A"}}, nil),
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := missingEnvKeys(tc.rep)
+			if !tc.want {
+				wantNone(t, got)
+				return
+			}
+			wantOne(t, got, "ENV-002", SeverityWarning, "")
+			if !strings.Contains(got[0].Evidence, tc.wantTxt) {
+				t.Errorf("Evidence = %q, want it to mention %q", got[0].Evidence, tc.wantTxt)
+			}
+		})
+	}
+}
+
+func TestEmptyEnvVariables(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  project.Report
+		want bool
+	}{
+		{
+			name: "one empty variable",
+			rep:  envReport(&env.File{Keys: []string{"A"}, Empty: []string{"A"}}, nil),
+			want: true,
+		},
+		{
+			name: "no empty variables",
+			rep:  envReport(&env.File{Keys: []string{"A"}}, nil),
+			want: false,
+		},
+		{
+			name: "no .env file",
+			rep:  envReport(nil, nil),
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := emptyEnvVariables(tc.rep)
+			if tc.want {
+				wantOne(t, got, "ENV-003", SeverityWarning, "")
+				if !strings.Contains(got[0].Evidence, "A") {
+					t.Errorf("Evidence = %q, want variable name", got[0].Evidence)
+				}
+			} else {
+				wantNone(t, got)
+			}
+		})
+	}
+}
+
+func TestMalformedEnvLines(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  project.Report
+		want bool
+	}{
+		{
+			name: "malformed lines",
+			rep:  envReport(&env.File{Malformed: []int{3, 7}}, nil),
+			want: true,
+		},
+		{
+			name: "clean file",
+			rep:  envReport(&env.File{Keys: []string{"A"}}, nil),
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := malformedEnvLines(tc.rep)
+			if !tc.want {
+				wantNone(t, got)
+				return
+			}
+			wantOne(t, got, "ENV-004", SeverityWarning, "")
+			// Line numbers only: never the line contents, which may
+			// hold a secret.
+			for _, want := range []string{"line 3", "line 7"} {
+				if !strings.Contains(got[0].Evidence, want) {
+					t.Errorf("Evidence = %q, want it to mention %q", got[0].Evidence, want)
+				}
+			}
+		})
+	}
+}
+
 func TestRunAppliesRulesInOrder(t *testing.T) {
-	// Fires all three rules; output order must be rule order.
+	// Fires all the Phase 4 rules; output order must be rule order.
 	rep := report("package.json", "requirements.txt")
 	got := Run(rep, DefaultRules())
 	ids := make([]string, 0, len(got))
@@ -134,9 +297,25 @@ func TestRunAppliesRulesInOrder(t *testing.T) {
 	}
 }
 
+func TestRunAppliesEnvRulesInOrder(t *testing.T) {
+	rep := envReport(
+		&env.File{Keys: []string{"A"}, Empty: []string{"A"}, Malformed: []int{9}},
+		&env.File{Keys: []string{"A", "B"}},
+	)
+	got := Run(rep, DefaultRules())
+	ids := make([]string, 0, len(got))
+	for _, d := range got {
+		ids = append(ids, d.ID)
+	}
+	want := "ENV-002,ENV-003,ENV-004"
+	if strings.Join(ids, ",") != want {
+		t.Errorf("order = %v, want %s", ids, want)
+	}
+}
+
 func TestRunOnZeroReportFindsNothing(t *testing.T) {
-	// A zero Report has a nil Present map; reading it must not panic
-	// and no rule may fire on an evidence-free report.
+	// A zero Report has a nil Present map and nil Env files; reading
+	// them must not panic and no rule may fire without evidence.
 	got := Run(project.Report{}, DefaultRules())
 	wantNone(t, got)
 }

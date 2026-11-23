@@ -21,6 +21,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"devdoctor/internal/env"
 )
 
 // Fact is one thing we believe about the project, with optional detail.
@@ -31,13 +33,16 @@ type Fact struct {
 
 // Report is the result of scanning one project directory.
 //
-// Facts are for humans; Present is for rules. Rules ask about raw paths
-// ("does package.json exist?") instead of matching on display labels, so
-// rewording a Fact can never silently break a rule.
+// Facts are for humans; Present, Env and EnvExample are for rules.
+// Rules ask about raw paths ("does package.json exist?") instead of
+// matching on display labels, so rewording a Fact can never silently
+// break a rule.
 type Report struct {
-	Root    string          // the directory that was scanned
-	Facts   []Fact          // every claim made about the project
-	Present map[string]bool // marker paths (slash-separated, relative to Root) that exist
+	Root       string          // the directory that was scanned
+	Facts      []Fact          // every claim made about the project
+	Present    map[string]bool // marker paths (slash-separated, relative to Root) that exist
+	Env        *env.File       // parsed .env; nil when the file does not exist
+	EnvExample *env.File       // parsed .env.example; nil when the file does not exist
 }
 
 // IsNodeProject reports whether the scan found Node.js indicators.
@@ -164,6 +169,26 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 		}, nil
 	}
 
+	// Environment files are parsed here, in the evidence stage, so rules
+	// stay pure functions of the report. env.Parse keeps only names and
+	// shapes — never values — so nothing secret can reach a report, and
+	// therefore nothing secret can reach the terminal.
+	var envFile, envExample *env.File
+	if present[".env"] {
+		f, err := env.ParseFS(fsys, path.Join(root, ".env"))
+		if err != nil {
+			return Report{Root: root}, fmt.Errorf("read .env: %w", err)
+		}
+		envFile = &f
+	}
+	if present[".env.example"] {
+		f, err := env.ParseFS(fsys, path.Join(root, ".env.example"))
+		if err != nil {
+			return Report{Root: root}, fmt.Errorf("read .env.example: %w", err)
+		}
+		envExample = &f
+	}
+
 	// Emit raw facts in a stable order (sorted), then derived
 	// conclusions that only make sense given earlier evidence.
 	labels := make([]string, 0, len(found))
@@ -190,7 +215,13 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 		}
 	}
 
-	return Report{Root: root, Present: present, Facts: facts}, nil
+	return Report{
+		Root:       root,
+		Present:    present,
+		Env:        envFile,
+		EnvExample: envExample,
+		Facts:      facts,
+	}, nil
 }
 
 // statAny answers "does this path exist?" while preserving the
