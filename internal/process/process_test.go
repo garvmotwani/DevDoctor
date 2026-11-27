@@ -156,6 +156,16 @@ func TestSnapshotOfIsSafeToCall(t *testing.T) {
 	}
 }
 
+func TestUnsupportedInspectionUsesAnEmptyPortsSlice(t *testing.T) {
+	// The macOS/other-platform adapter returns ErrUnsupported. Exercise the
+	// public result contract here so JSON consumers see [] instead of null on
+	// platforms where inspection is unavailable.
+	snap := unavailableSnapshot("unavailable")
+	if snap.Ports == nil {
+		t.Fatal("Ports must be an empty slice when inspection is unavailable")
+	}
+}
+
 func TestDevPortsAreValid(t *testing.T) {
 	seen := map[int]bool{}
 	for _, port := range DevPorts {

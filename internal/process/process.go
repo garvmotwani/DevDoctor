@@ -72,11 +72,17 @@ func SnapshotOf(wanted []int) Snapshot {
 	all, err := inspect()
 	switch {
 	case errors.Is(err, ErrUnsupported):
-		return Snapshot{Note: "Reading listening ports and their owning processes is not implemented for this platform yet."}
+		return unavailableSnapshot("Reading listening ports and their owning processes is not implemented for this platform yet.")
 	case err != nil:
-		return Snapshot{Note: "Listening ports could not be read on this system, possibly because of permissions."}
+		return unavailableSnapshot("Listening ports could not be read on this system, possibly because of permissions.")
 	}
 	return snapshotFrom(all, wanted)
+}
+
+// unavailableSnapshot keeps the JSON contract stable when a platform or a
+// permission boundary prevents inspection: Ports is [] rather than null.
+func unavailableSnapshot(note string) Snapshot {
+	return Snapshot{Ports: []Listener{}, Note: note}
 }
 
 // snapshotFrom is the platform-neutral half of SnapshotOf: filter,
