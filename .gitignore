@@ -10,3 +10,6 @@ Thumbs.db
 
 # Tooling workspace state
 .freebuff/
+
+# Imported chat attachments (local only)
+.cloud-attachments/

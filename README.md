@@ -19,6 +19,7 @@ uploaded. Secrets are never printed.
 | 4     | Diagnostic rule engine                   | done (tests included) |
 | 5     | Environment variable diagnostics         | done (tests included) |
 | 6     | Subcommands, JSON output, exit codes     | done (tests included) |
+| 7     | Port and process diagnostics             | done (tests included) |
 
 ## Run
 
@@ -34,11 +35,23 @@ go run . scan ./some-project
 
 # scan a specific directory and emit JSON
 go run . scan --json ./some-project
+
+# open the local browser dashboard (the printed URL uses a free port from 8080–8089)
+go run . serve ./some-project
 ```
 
 `--json` is accepted before or after `scan`. Unknown subcommands, unknown
 flags and extra positional arguments are rejected with a short usage message
 instead of being guessed at.
+
+## Local dashboard
+
+`devdoctor serve [directory]` provides a browser UI with the same report as
+the CLI, including a refreshable dashboard and a `GET /api/report` JSON
+endpoint. It binds only to a `127.0.0.1` loopback address, so it is accessible from the
+local machine only and sends no project data over the network. If port 8080
+is occupied, DevDoctor tries the next available port through 8089 and prints
+the exact URL to open.
 
 ## Build
 
@@ -88,6 +101,7 @@ does not exist, a path that is a file — are written to stderr and exit `2`.
 - `root` — the absolute path that was scanned
 - `system` — `os` and `architecture`
 - `tools` — `name`, `status` (`ok`, `not_found`, `error`) and `version` when known
+- `ports` — occupied development ports as `port`, `protocol`, and `process`/`pid` when readable
 - `facts` — project facts as `label` and `detail`
 - `diagnostics` — `id`, `severity`, `title`, `description`, `evidence`, `suggestedFix`
 - `summary` — counts for `info`, `warnings` and `errors`
@@ -106,12 +120,61 @@ they describe the local machine, not the project.
 go run . --json | grep -c 'SECRET'   # 0 unless the word is in a variable name
 ```
 
+## Ports and processes
+
+DevDoctor checks a small set of development ports — `3000`, `5173`, `8000`,
+`8080`, `5432`, `6379` — and reports who owns each occupied one:
+
+```text
+[1] ℹ Port 8000 is in use
+    PORT-001 (info)
+
+    Evidence: TCP listening socket on port 8000; process: node.exe; PID: 23976
+```
+
+**DevDoctor never stops, signals or suspends a process.** It only reads and
+reports. Suggesting "kill this PID" would be dangerous advice: the process may
+be your own dev server, a database you want running, or something the system
+needs. A busy port is therefore reported as *information*, not a warning, and
+it does not change the exit code on its own. It becomes a problem only when
+something fails to bind, which is a question DevDoctor answers in a later
+phase, not one it guesses at now.
+
+How the information is obtained differs by platform — the operating systems
+really do expose this differently:
+
+| OS      | Mechanism                                                    |
+| ------- | ------------------------------------------------------------ |
+| Windows | `netstat -ano -p tcp` for listening sockets and PIDs, `tasklist /FO CSV /NH` for process names |
+| Linux   | `/proc/net/tcp` and `/proc/net/tcp6` for sockets, `/proc/<pid>/fd` to match a socket inode to its owner, `/proc/<pid>/comm` for the name |
+| other   | not implemented; the scan says so (`PROC-001`) instead of claiming no ports are in use |
+
+Windows has no `/proc`, and the IP Helper API that holds the same data needs
+cgo. Linux has `/proc` but `ss`, `netstat` and `lsof` are optional packages, so
+DevDoctor reads the kernel files directly and runs no external program there.
+
+Two boundaries are respected on purpose:
+
+- **Permissions.** A standard user cannot see other users' processes. Those
+  ports are still reported, with the PID if it is known and an explicit note
+  that the name could not be read. DevDoctor reports the limit; it does not ask
+  for root or an administrator prompt to get around it.
+- **Privacy.** Only the process *name* is read. Command lines are not: they
+  routinely contain tokens, connection strings and passwords, and a
+  diagnostics report must not copy those into a terminal or a JSON document.
+
+```bash
+go run . scan --json . | grep -A2 '"ports"'
+```
+
 ## Principles
 
 - Go standard library first; no dependencies without a compelling reason.
 - Deterministic diagnostics before any AI features.
 - Never print secret values (e.g. from `.env`).
 - Every suggested fix is displayed before it could ever be executed.
+- No process is ever stopped. Port and process diagnostics are read-only, and
+  no rule in this phase produces a fix command at all.
 - Package-manager fixes are suggested only when one lockfile identifies a
   single manager; DevDoctor never guesses between npm, pnpm, Yarn, or Bun.
 - One source of truth: the CLI renders what the rules produced and never

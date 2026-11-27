@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"devdoctor/internal/diagnostics"
+	"devdoctor/internal/process"
 	"devdoctor/internal/project"
 	"devdoctor/internal/system"
 	"devdoctor/internal/tools"
@@ -38,6 +39,7 @@ type result struct {
 	System      system.Info
 	Tools       []tools.Result
 	Report      project.Report
+	Ports       process.Snapshot
 	Diagnostics []diagnostics.Diagnostic
 }
 
@@ -45,6 +47,12 @@ type result struct {
 // codes without spawning real version commands.
 var checkTools = func() []tools.Result {
 	return tools.CheckAll(tools.Defaults(), 3*time.Second)
+}
+
+// checkPorts is a variable for the same reason: tests must not depend
+// on which ports happen to be busy on the machine running them.
+var checkPorts = func() process.Snapshot {
+	return process.SnapshotOf(process.DevPorts)
 }
 
 func main() {
@@ -70,6 +78,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "devdoctor: %v\n", err)
 		return exitFailure
 	}
+	if opts.serve {
+		if err := serveDashboard(root, func(addr string) {
+			fmt.Fprintf(stdout, "DevDoctor dashboard: http://%s\nScanning: %s\nPress Ctrl+C to stop.\n", addr, root)
+		}); err != nil {
+			fmt.Fprintf(stderr, "devdoctor: dashboard stopped: %v\n", err)
+			return exitFailure
+		}
+		return exitOK
+	}
 
 	res, err := collect(root)
 	if err != nil {
@@ -90,17 +107,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // collect gathers machine and project evidence and runs the rules.
-// Rules are pure functions over the report, so nothing here touches
-// the disk a second time.
+// Rules are pure functions over the collected evidence, so nothing
+// here touches the disk a second time.
+//
+// Project rules and port rules have different inputs, so they are run
+// by two small engines and concatenated in a fixed order: project
+// problems first, then machine observations.
 func collect(root string) (result, error) {
 	rep, err := project.ScanPath(root)
 	if err != nil {
 		return result{}, err
 	}
+	ports := checkPorts()
+
+	found := diagnostics.Run(rep, diagnostics.DefaultRules())
+	found = append(found, diagnostics.RunPorts(ports, diagnostics.PortRules())...)
+
 	return result{
 		System:      system.GetInfo(),
 		Tools:       checkTools(),
 		Report:      rep,
-		Diagnostics: diagnostics.Run(rep, diagnostics.DefaultRules()),
+		Ports:       ports,
+		Diagnostics: found,
 	}, nil
 }

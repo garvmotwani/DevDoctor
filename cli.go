@@ -11,9 +11,10 @@ import (
 
 // options is the parsed command line.
 type options struct {
-	json bool   // machine-readable output instead of text
-	help bool   // print usage and stop
-	dir  string // directory to scan; "" means the current directory
+	json  bool   // machine-readable output instead of text
+	help  bool   // print usage and stop
+	serve bool   // host the local browser dashboard
+	dir   string // directory to scan; "" means the current directory
 }
 
 // usageText is shown for --help and appended to every usage error.
@@ -22,10 +23,16 @@ const usageText = `DevDoctor — local-first developer diagnostics
 Usage:
   devdoctor [--json]                      scan the current directory
   devdoctor scan [--json] [directory]     scan a directory
+  devdoctor serve [directory]             host a local browser dashboard
 
 Flags:
   --json    print one JSON document instead of text
   --help    show this message
+
+Dashboard:
+  The serve command listens only on the first available address from
+  http://127.0.0.1:8080 through :8089 and never uploads project data.
+  Press Ctrl+C to stop it.
 
 Exit codes:
   0  scan completed, no warnings or errors
@@ -65,8 +72,14 @@ func parseArgs(args []string) (options, error) {
 	if len(positional) == 0 {
 		return opts, nil
 	}
-	if positional[0] != "scan" {
+	if positional[0] != "scan" && positional[0] != "serve" {
 		return options{}, fmt.Errorf("unknown command %q", positional[0])
+	}
+	if positional[0] == "serve" {
+		if opts.json {
+			return options{}, errors.New("--json cannot be used with the serve command")
+		}
+		opts.serve = true
 	}
 
 	switch len(positional) - 1 {
@@ -76,7 +89,7 @@ func parseArgs(args []string) (options, error) {
 		opts.dir = positional[1]
 		return opts, nil
 	default:
-		return options{}, fmt.Errorf("too many arguments for \"scan\" (expected at most one directory)")
+		return options{}, fmt.Errorf("too many arguments for %q (expected at most one directory)", positional[0])
 	}
 }
 

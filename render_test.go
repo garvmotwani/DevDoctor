@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"devdoctor/internal/diagnostics"
+	"devdoctor/internal/process"
 	"devdoctor/internal/project"
 	"devdoctor/internal/system"
 	"devdoctor/internal/tools"
@@ -38,6 +39,10 @@ func sampleResult() result {
 			Root:  `C:\work\some-project`,
 			Facts: []project.Fact{{Label: "Node.js project"}, {Label: "package manager", Detail: "npm"}},
 		},
+		Ports: process.Snapshot{Ports: []process.Listener{
+			{Port: 8000, Protocol: "tcp", PID: 14232, Process: "vite"},
+			{Port: 3000, Protocol: "tcp", PID: 4711}, // name not readable
+		}},
 		Diagnostics: []diagnostics.Diagnostic{
 			{
 				ID:          "PY-001",
@@ -79,7 +84,7 @@ func TestRenderJSONShape(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	for _, key := range []string{"version", "root", "system", "tools", "facts", "diagnostics", "summary"} {
+	for _, key := range []string{"version", "root", "system", "tools", "ports", "facts", "diagnostics", "summary"} {
 		if _, ok := doc[key]; !ok {
 			t.Errorf("JSON is missing top-level key %q", key)
 		}
@@ -119,6 +124,22 @@ func TestRenderJSONShape(t *testing.T) {
 	facts, ok := doc["facts"].([]any)
 	if !ok || len(facts) != 2 {
 		t.Fatalf("facts = %v, want 2 entries", doc["facts"])
+	}
+
+	ports, ok := doc["ports"].([]any)
+	if !ok || len(ports) != 2 {
+		t.Fatalf("ports = %v, want 2 entries", doc["ports"])
+	}
+	first := ports[0].(map[string]any)
+	if first["port"] != 8000.0 || first["protocol"] != "tcp" || first["process"] != "vite" || first["pid"] != 14232.0 {
+		t.Errorf("ports[0] = %v, want port/protocol/process/pid", first)
+	}
+	second := ports[1].(map[string]any)
+	if second["port"] != 3000.0 || second["pid"] != 4711.0 {
+		t.Errorf("ports[1] = %v, want the port and the PID it does know", second)
+	}
+	if _, ok := second["process"]; ok {
+		t.Errorf("an unreadable process name must be omitted, got %v", second["process"])
 	}
 
 	diags, ok := doc["diagnostics"].([]any)
@@ -180,7 +201,7 @@ func TestRenderJSONEmptySlices(t *testing.T) {
 		t.Fatalf("renderJSON error: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{`"tools": []`, `"facts": []`, `"diagnostics": []`} {
+	for _, want := range []string{`"tools": []`, `"ports": []`, `"facts": []`, `"diagnostics": []`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("empty result should encode %s, got:\n%s", want, out)
 		}
@@ -196,6 +217,7 @@ func TestRenderJSONEmptySlices(t *testing.T) {
 // that for a realistic file.
 func TestRenderJSONNeverLeaksEnvValues(t *testing.T) {
 	stubTools(t)
+	stubPorts(t)
 	const secret = "sk-live-DO-NOT-PRINT-12345"
 
 	dir := writeFixture(t, map[string]string{
@@ -225,6 +247,30 @@ func TestRenderJSONNeverLeaksEnvValues(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("JSON should mention %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestRenderHumanReportsBusyPorts checks the phase 7 output is visible
+// in the default text report, with no fix command attached.
+func TestRenderHumanReportsBusyPorts(t *testing.T) {
+	res := result{Diagnostics: []diagnostics.Diagnostic{{
+		ID:          "PORT-001",
+		Severity:    diagnostics.SeverityInfo,
+		Title:       "Port 8000 is in use",
+		Description: "reported",
+		Evidence:    "TCP listening socket on port 8000; process: vite; PID: 14232",
+	}}}
+	var buf bytes.Buffer
+	renderHuman(&buf, res)
+	out := buf.String()
+
+	for _, want := range []string{"ℹ Port 8000 is in use", "PORT-001 (info)", "process: vite", "No problems found."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("human output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(strings.ToLower(out), "kill") {
+		t.Errorf("human output must not tell the user to kill anything:\n%s", out)
 	}
 }
 

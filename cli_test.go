@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"devdoctor/internal/process"
 	"devdoctor/internal/tools"
 )
 
@@ -16,6 +17,15 @@ func stubTools(t *testing.T) {
 	original := checkTools
 	checkTools = func() []tools.Result { return nil }
 	t.Cleanup(func() { checkTools = original })
+}
+
+// stubPorts does the same for socket inspection, so tests do not depend
+// on which ports are busy on the machine running them.
+func stubPorts(t *testing.T) {
+	t.Helper()
+	original := checkPorts
+	checkPorts = func() process.Snapshot { return process.Snapshot{Ports: []process.Listener{}} }
+	t.Cleanup(func() { checkPorts = original })
 }
 
 func TestParseArgs(t *testing.T) {
@@ -32,6 +42,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "scan with directory", args: []string{"scan", "./some-project"}, want: options{dir: "./some-project"}},
 		{name: "scan with flag before dir", args: []string{"scan", "--json", "./p"}, want: options{json: true, dir: "./p"}},
 		{name: "flag before subcommand", args: []string{"--json", "scan", "./p"}, want: options{json: true, dir: "./p"}},
+		{name: "serve with directory", args: []string{"serve", "./p"}, want: options{serve: true, dir: "./p"}},
 		{name: "help long", args: []string{"--help"}, want: options{help: true}},
 		{name: "help short", args: []string{"-h"}, want: options{help: true}},
 		{name: "help subcommand", args: []string{"help"}, want: options{help: true}},
@@ -39,6 +50,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "unknown command with json", args: []string{"--json", "doctor"}, wantErr: true},
 		{name: "too many arguments", args: []string{"scan", "a", "b"}, wantErr: true},
 		{name: "unknown flag", args: []string{"--verbose"}, wantErr: true},
+		{name: "json serve is rejected", args: []string{"serve", "--json"}, wantErr: true},
 		{name: "bare dash", args: []string{"-"}, wantErr: true},
 	}
 
@@ -134,6 +146,7 @@ func writeFixture(t *testing.T, files map[string]string) string {
 
 func TestRunExitCodes(t *testing.T) {
 	stubTools(t)
+	stubPorts(t)
 
 	clean := writeFixture(t, map[string]string{
 		".git/":            "",
@@ -202,6 +215,7 @@ func TestRunHelp(t *testing.T) {
 
 func TestRunSelectsDirectory(t *testing.T) {
 	stubTools(t)
+	stubPorts(t)
 	dir := writeFixture(t, map[string]string{"requirements.txt": "flask\n"})
 
 	var stdout, stderr bytes.Buffer

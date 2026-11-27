@@ -111,6 +111,7 @@ type jsonReport struct {
 	Root        string           `json:"root"`
 	System      jsonSystem       `json:"system"`
 	Tools       []jsonTool       `json:"tools"`
+	Ports       []jsonPort       `json:"ports"`
 	Facts       []jsonFact       `json:"facts"`
 	Diagnostics []jsonDiagnostic `json:"diagnostics"`
 	Summary     jsonSummary      `json:"summary"`
@@ -130,6 +131,16 @@ type jsonTool struct {
 type jsonFact struct {
 	Label  string `json:"label"`
 	Detail string `json:"detail"`
+}
+
+// jsonPort is one occupied development port. The process name and PID
+// are omitted when the operating system would not disclose them, which
+// is a normal outcome for other users' processes.
+type jsonPort struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Process  string `json:"process,omitempty"`
+	PID      int    `json:"pid,omitempty"`
 }
 
 type jsonDiagnostic struct {
@@ -155,6 +166,7 @@ func renderJSON(w io.Writer, res result) error {
 		Root:        res.Report.Root,
 		System:      jsonSystem{OS: res.System.OS, Architecture: res.System.Architecture},
 		Tools:       make([]jsonTool, 0, len(res.Tools)),
+		Ports:       make([]jsonPort, 0, len(res.Ports.Ports)),
 		Facts:       make([]jsonFact, 0, len(res.Report.Facts)),
 		Diagnostics: make([]jsonDiagnostic, 0, len(res.Diagnostics)),
 	}
@@ -165,6 +177,15 @@ func renderJSON(w io.Writer, res result) error {
 			tool.Version = r.Version
 		}
 		out.Tools = append(out.Tools, tool)
+	}
+
+	for _, p := range res.Ports.Ports {
+		out.Ports = append(out.Ports, jsonPort{
+			Port:     p.Port,
+			Protocol: p.Protocol,
+			Process:  p.Process,
+			PID:      p.PID,
+		})
 	}
 
 	for _, f := range res.Report.Facts {
