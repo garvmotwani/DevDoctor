@@ -1,5 +1,67 @@
 # DevDoctor
 
+[![CI](https://github.com/garvmotwani/DevDoctor/actions/workflows/ci.yml/badge.svg)](https://github.com/garvmotwani/DevDoctor/actions/workflows/ci.yml)
+
+A local-first developer diagnostics tool for finding setup problems before they
+become debugging sessions. DevDoctor combines a fast Go CLI, machine-readable
+JSON, and a private browser dashboard — all without uploading project data.
+
+![DevDoctor dashboard preview](assets/dashboard-preview.svg)
+
+## Why DevDoctor?
+
+New projects often fail for ordinary, hard-to-spot reasons: dependencies were
+not installed, a local environment variable is missing, a lockfile conflicts
+with another package manager, or a development port is already occupied.
+DevDoctor gathers local evidence and explains the likely cause with a safe
+suggested next step. It never executes a fix automatically.
+
+### Highlights
+
+- **Local-first by design.** No project data leaves the machine; the dashboard
+  binds only to `127.0.0.1`.
+- **Security-aware configuration checks.** `.env` values are discarded during
+  parsing, so they cannot appear in terminal output, JSON, or the dashboard.
+- **Practical stack insight.** Detects Node.js, Python, Docker, Git, common
+  frameworks, package managers, and occupied development ports.
+- **Automation-ready.** Text, JSON, and documented exit codes support both
+  human workflows and CI scripts.
+
+## Quick start
+
+Prerequisite: [Go 1.21+](https://go.dev/dl/).
+
+```bash
+git clone https://github.com/garvmotwani/DevDoctor.git
+cd DevDoctor
+go run .
+```
+
+To open the local dashboard:
+
+```bash
+go run . serve
+```
+
+DevDoctor prints a loopback URL such as `http://127.0.0.1:8081`. Open it in a
+browser, then press `Ctrl+C` in the terminal when you are done.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[CLI or dashboard request] --> B[Project and machine scanners]
+    B --> C[Evidence report]
+    C --> D[Deterministic diagnostic rules]
+    D --> E[Text CLI]
+    D --> F[JSON report]
+    D --> G[Local dashboard]
+```
+
+Scanners collect facts; rules interpret those facts. Rendering is separate,
+which keeps the results consistent across every interface and makes rules easy
+to test.
+
 A local-first developer diagnostics CLI. DevDoctor scans your machine and a
 project directory, detects common problems (missing tools, missing
 dependencies, broken configuration), and explains likely causes with safe,
@@ -22,7 +84,7 @@ uploaded. Secrets are never printed.
 | 7     | Port and process diagnostics             | done (tests included) |
 | —     | Project intelligence (package.json facts)| done (tests included) |
 
-## Run
+## Commands
 
 ```bash
 # scan the current directory (default, human-readable text)
@@ -79,6 +141,19 @@ Project and environment detection are tested against in-memory filesystems
 (`fstest.MapFS`), so tests never touch the real disk. The CLI layer is tested
 with temporary directories and a stubbed tool check, so it never runs version
 commands either.
+
+## Continuous integration
+
+GitHub Actions runs the following on every push and pull request:
+
+```bash
+go test ./...
+go vet ./...
+go build ./...
+```
+
+This keeps the command-line tool and its local dashboard buildable as the rule
+set grows.
 
 ## Exit codes
 
