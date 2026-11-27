@@ -11,6 +11,8 @@ import (
 // Adding a rule later means appending here — the engine does not care.
 func DefaultRules() []Rule {
 	return []Rule{
+		invalidPackageManifest,
+		conflictingLockfiles,
 		missingNodeModules,
 		missingPythonEnvironment,
 		missingGitRepository,
@@ -19,6 +21,41 @@ func DefaultRules() []Rule {
 		emptyEnvVariables,
 		malformedEnvLines,
 	}
+}
+
+// invalidPackageManifest reports malformed JSON without echoing parser detail
+// or file contents. package.json is executable project configuration, so a
+// syntax error can stop package tools before the application ever starts.
+func invalidPackageManifest(rep project.Report) []Diagnostic {
+	if !rep.PackageErr {
+		return nil
+	}
+	return []Diagnostic{{
+		ID:           "PKG-001",
+		Severity:     SeverityError,
+		Title:        "package.json is not valid JSON",
+		Description:  "DevDoctor could not parse package.json. Node package managers and project tooling require valid JSON, so installs and scripts may fail until the syntax is corrected.",
+		Evidence:     "package.json exists but could not be parsed as JSON.",
+		SuggestedFix: "Fix the JSON syntax in package.json",
+	}}
+}
+
+// conflictingLockfiles reports multiple package-manager lockfiles. Choosing
+// one install command in this situation risks modifying the wrong dependency
+// graph, so the existing dependency rule deliberately offers no command.
+func conflictingLockfiles(rep project.Report) []Diagnostic {
+	managers := rep.PackageManagers()
+	if len(managers) < 2 {
+		return nil
+	}
+	return []Diagnostic{{
+		ID:           "DEP-002",
+		Severity:     SeverityWarning,
+		Title:        "Multiple package-manager lockfiles detected",
+		Description:  "This project has lockfiles for more than one package manager. Those files can resolve different dependency trees, making installs and builds inconsistent across machines.",
+		Evidence:     fmt.Sprintf("Lockfiles indicate: %s.", strings.Join(managers, ", ")),
+		SuggestedFix: "Choose one package manager and remove the obsolete lockfiles",
+	}}
 }
 
 // missingNodeModules implements Rule 1: package.json exists but

@@ -90,6 +90,26 @@ func TestMissingNodeModules(t *testing.T) {
 	}
 }
 
+func TestPackageManifestDiagnostics(t *testing.T) {
+	t.Run("invalid JSON is an error", func(t *testing.T) {
+		got := invalidPackageManifest(project.Report{PackageErr: true})
+		wantOne(t, got, "PKG-001", SeverityError, "Fix the JSON syntax in package.json")
+	})
+	t.Run("valid or absent manifest is quiet", func(t *testing.T) {
+		wantNone(t, invalidPackageManifest(project.Report{}))
+	})
+	t.Run("conflicting lockfiles are a warning", func(t *testing.T) {
+		got := conflictingLockfiles(report("package-lock.json", "yarn.lock"))
+		wantOne(t, got, "DEP-002", SeverityWarning, "Choose one package manager and remove the obsolete lockfiles")
+		if !strings.Contains(got[0].Evidence, "npm, yarn") {
+			t.Errorf("Evidence = %q", got[0].Evidence)
+		}
+	})
+	t.Run("one lockfile is quiet", func(t *testing.T) {
+		wantNone(t, conflictingLockfiles(report("pnpm-lock.yaml")))
+	})
+}
+
 func TestMissingPythonEnvironment(t *testing.T) {
 	cases := []struct {
 		name string

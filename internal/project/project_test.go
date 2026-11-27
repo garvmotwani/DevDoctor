@@ -116,6 +116,31 @@ func TestScanNodeWithoutLockfileHasNoManager(t *testing.T) {
 	wantLabels(t, rep, nil, []string{"package manager"})
 }
 
+func TestScanPackageManifestFacts(t *testing.T) {
+	rep := scan(t, map[string]string{
+		"fakeDir/package.json": `{
+          "engines":{"node":">=20"},
+          "packageManager":"pnpm@9.15.0",
+          "dependencies":{"next":"15.0.0","react":"19.0.0"},
+          "devDependencies":{"typescript":"5.0.0"}
+        }`,
+	})
+	wantLabels(t, rep, []string{"Next.js", "React", ">=20", "pnpm@9.15.0"}, nil)
+	if rep.Package == nil {
+		t.Fatal("expected package manifest")
+	}
+	if got := strings.Join(rep.Package.Frameworks, ","); got != "Next.js,React" {
+		t.Errorf("Frameworks = %q", got)
+	}
+}
+
+func TestScanInvalidPackageManifestDoesNotAbort(t *testing.T) {
+	rep := scan(t, map[string]string{"fakeDir/package.json": `{"name":`})
+	if !rep.PackageErr || rep.Package != nil {
+		t.Errorf("PackageErr/Package = %v/%+v, want true/nil", rep.PackageErr, rep.Package)
+	}
+}
+
 func TestScanPythonProject(t *testing.T) {
 	files := map[string]string{
 		"fakeDir/requirements.txt": "requests==2.31.0\n",

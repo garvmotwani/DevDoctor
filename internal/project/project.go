@@ -1,10 +1,10 @@
 // Package project inspects the directory DevDoctor was run from and
 // reports what kind of project it looks like.
 //
-// Detection is deliberately conservative: a claim is made only when the
-// file or directory naming it exists. File *contents* are not read yet,
-// so nothing here may say "React project" just because package.json
-// exists — that would be weak evidence.
+// Detection is deliberately conservative: marker files establish project
+// types, and the small set of manifests we parse produces facts only from
+// explicit, well-known metadata. For example, a React claim requires React
+// to appear in package.json dependencies.
 //
 // All filesystem access goes through the fs.FS interface (os.DirFS for
 // the real disk, fstest.MapFS in tests) so detection logic is testable
@@ -14,6 +14,7 @@
 package project
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -38,11 +39,23 @@ type Fact struct {
 // matching on display labels, so rewording a Fact can never silently
 // break a rule.
 type Report struct {
-	Root       string          // the directory that was scanned
-	Facts      []Fact          // every claim made about the project
-	Present    map[string]bool // marker paths (slash-separated, relative to Root) that exist
-	Env        *env.File       // parsed .env; nil when the file does not exist
-	EnvExample *env.File       // parsed .env.example; nil when the file does not exist
+	Root       string           // the directory that was scanned
+	Facts      []Fact           // every claim made about the project
+	Present    map[string]bool  // marker paths (slash-separated, relative to Root) that exist
+	Env        *env.File        // parsed .env; nil when the file does not exist
+	EnvExample *env.File        // parsed .env.example; nil when the file does not exist
+	Package    *PackageManifest // parsed package.json; nil when absent or invalid
+	PackageErr bool             // package.json exists but is not valid JSON
+}
+
+// PackageManifest is the safe subset of package.json that DevDoctor needs for
+// diagnostics. It deliberately excludes package scripts, repository URLs,
+// author fields and arbitrary config, which are irrelevant to diagnosis and
+// would needlessly enlarge the report surface.
+type PackageManifest struct {
+	NodeEngine     string
+	PackageManager string
+	Frameworks     []string
 }
 
 // IsNodeProject reports whether the scan found Node.js indicators.
@@ -70,11 +83,17 @@ func (r Report) IsPythonProject() bool {
 // the project has conflicting lockfiles; in both cases a diagnostic must not
 // guess which install command is safe to recommend.
 func (r Report) PackageManager() (string, bool) {
-	managers := packageManagers(r.Present)
+	managers := r.PackageManagers()
 	if len(managers) != 1 {
 		return "", false
 	}
 	return managers[0], true
+}
+
+// PackageManagers returns every manager indicated by a lockfile, in stable
+// order. More than one value is evidence of an ambiguous install workflow.
+func (r Report) PackageManagers() []string {
+	return packageManagers(r.Present)
 }
 
 // marker is a path whose existence lets us claim label.
@@ -193,6 +212,20 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 		}
 		envFile = &f
 	}
+
+	// package.json is parsed only for explicit stack metadata. An invalid file
+	// is useful diagnostic evidence but must not prevent the rest of the scan
+	// from completing.
+	var pkg *PackageManifest
+	var packageErr bool
+	if present["package.json"] {
+		parsed, err := parsePackageManifest(fsys, path.Join(root, "package.json"))
+		if err != nil {
+			packageErr = true
+		} else {
+			pkg = &parsed
+		}
+	}
 	if present[".env.example"] {
 		f, err := env.ParseFS(fsys, path.Join(root, ".env.example"))
 		if err != nil {
@@ -209,7 +242,7 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 	}
 	sort.Strings(labels)
 
-	facts := make([]Fact, 0, len(labels)+2)
+	facts := make([]Fact, 0, len(labels)+5)
 	for _, label := range labels {
 		facts = append(facts, Fact{Label: label})
 	}
@@ -217,6 +250,17 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 	if found["Node.js project"] {
 		if detail := lockfileSummary(found); detail != "" {
 			facts = append(facts, Fact{Label: "package manager", Detail: detail})
+		}
+		if pkg != nil {
+			for _, framework := range pkg.Frameworks {
+				facts = append(facts, Fact{Label: "framework", Detail: framework})
+			}
+			if pkg.NodeEngine != "" {
+				facts = append(facts, Fact{Label: "Node.js version", Detail: pkg.NodeEngine})
+			}
+			if pkg.PackageManager != "" {
+				facts = append(facts, Fact{Label: "declared package manager", Detail: pkg.PackageManager})
+			}
 		}
 	}
 	if found["Python project"] {
@@ -232,8 +276,65 @@ func scanFS(fsys fs.FS, root string) (Report, error) {
 		Present:    present,
 		Env:        envFile,
 		EnvExample: envExample,
+		Package:    pkg,
+		PackageErr: packageErr,
 		Facts:      facts,
 	}, nil
+}
+
+// parsePackageManifest reads a deliberately narrow, safe package.json view.
+// The dependency maps are used only to test well-known package names; version
+// strings are discarded immediately.
+func parsePackageManifest(fsys fs.FS, name string) (PackageManifest, error) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return PackageManifest{}, err
+	}
+	var raw struct {
+		Engines         map[string]string `json:"engines"`
+		PackageManager  string            `json:"packageManager"`
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return PackageManifest{}, err
+	}
+
+	return PackageManifest{
+		NodeEngine:     raw.Engines["node"],
+		PackageManager: raw.PackageManager,
+		Frameworks:     frameworks(raw.Dependencies, raw.DevDependencies),
+	}, nil
+}
+
+// frameworks recognizes a small, explicit set of ecosystem markers. The
+// order is intentional so facts and JSON output are deterministic.
+func frameworks(deps, devDeps map[string]string) []string {
+	has := func(name string) bool {
+		_, inDeps := deps[name]
+		_, inDevDeps := devDeps[name]
+		return inDeps || inDevDeps
+	}
+	var out []string
+	switch {
+	case has("next"):
+		out = append(out, "Next.js")
+	case has("@vitejs/plugin-react") || has("@vitejs/plugin-vue") || has("vite"):
+		out = append(out, "Vite")
+	}
+	if has("react") {
+		out = append(out, "React")
+	}
+	if has("vue") {
+		out = append(out, "Vue")
+	}
+	if has("@angular/core") {
+		out = append(out, "Angular")
+	}
+	if has("svelte") {
+		out = append(out, "Svelte")
+	}
+	return out
 }
 
 // statAny answers "does this path exist?" while preserving the

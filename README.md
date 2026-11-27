@@ -19,6 +19,7 @@ uploaded. Secrets are never printed.
 | 4     | Diagnostic rule engine                   | done (tests included) |
 | 5     | Environment variable diagnostics         | done (tests included) |
 | 6     | Subcommands, JSON output, exit codes     | done (tests included) |
+| 7     | Project intelligence                      | done (tests included) |
 | 7     | Port and process diagnostics             | done (tests included) |
 
 ## Run
@@ -52,6 +53,15 @@ endpoint. It binds only to a `127.0.0.1` loopback address, so it is accessible f
 local machine only and sends no project data over the network. If port 8080
 is occupied, DevDoctor tries the next available port through 8089 and prints
 the exact URL to open.
+
+## Project intelligence
+
+For Node.js projects, DevDoctor safely reads the small diagnostic subset of
+`package.json`: the declared Node.js engine, declared package manager, and
+well-known framework dependencies (Next.js, Vite, React, Vue, Angular and
+Svelte). It also reports malformed `package.json` files and conflicting
+lockfiles. Dependency version strings and unrelated manifest content are not
+included in the report.
 
 ## Build
 
