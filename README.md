@@ -19,8 +19,8 @@ uploaded. Secrets are never printed.
 | 4     | Diagnostic rule engine                   | done (tests included) |
 | 5     | Environment variable diagnostics         | done (tests included) |
 | 6     | Subcommands, JSON output, exit codes     | done (tests included) |
-| 7     | Project intelligence                      | done (tests included) |
 | 7     | Port and process diagnostics             | done (tests included) |
+| —     | Project intelligence (package.json facts)| done (tests included) |
 
 ## Run
 
