@@ -14,8 +14,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ['1.21.x']
+        include:
+          # Keep the declared Go 1.21 baseline covered where its test
+          # executable is compatible with the hosted runner images.
+          - os: ubuntu-latest
+            go: '1.21.x'
+          - os: windows-latest
+            go: '1.21.x'
+          # Go 1.21 test binaries abort on the current macos-latest image
+          # before DevDoctor code runs (dyld reports a missing LC_UUID).
+          # Stable Go verifies the macOS build and runtime path instead.
+          - os: macos-latest
+            go: 'stable'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
